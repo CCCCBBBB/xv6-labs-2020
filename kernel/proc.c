@@ -121,6 +121,23 @@ found:
     return 0;
   }
 
+  // Allocate the per-process kernel page table
+  p->kpagetable = ukvminit();
+  if(p->kpagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  // remap the kernel stack page per process
+  // physical address is already allocated in procinit()
+  // 每个kernel stack的虚拟地址va是已经提前决定好的 直接算出它对应的pa
+  // 然后把这个映射加入到新的专属内核页里
+  uint64 va = KSTACK((int) (p - proc));
+  pte_t pa = kvmpa(va);
+  memset((void *)pa, 0, PGSIZE); // 刷新清空kernel stack
+  ukvmmap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -150,6 +167,16 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  if (p->kpagetable) 
+  {
+    freeprockvm(p);
+    p->kpagetable = 0;
+  }
+
+  if (p->kstack) 
+  {
+    p->kstack = 0;
+  }
 }
 
 // Create a user page table for a given process,
@@ -220,7 +247,8 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-
+  // init kernel pagetable - lab3-3
+  u2kvmcopy(p->pagetable, p->kpagetable, 0, p->sz);
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -243,11 +271,24 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // prevent process from growing to PLIC address - lab3-3
+    if(sz + n > PLIC) {
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+      return -1;
+    }
+    // copy the increase user page table to kernel page table - lab3-3
+    if(u2kvmcopy(p->pagetable, p->kpagetable, p->sz, sz) < 0){
       return -1;
     }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // free process's kernel page table without free physical memory - lab3-3
+    if (PGROUNDUP(sz) < PGROUNDUP(p->sz)) {
+      uvmunmap(p->kpagetable, PGROUNDUP(sz),
+               (PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE, 0);
+    }
   }
   p->sz = sz;
   return 0;
@@ -274,6 +315,12 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  // copy user page table to kernel page table - lab3-3
+  if(u2kvmcopy(np->pagetable, np->kpagetable, 0, np->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
@@ -473,10 +520,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // Switch to chosen process's kernel pagetable
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+  
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+
+        // switch to the default pagetable
+        kvminithart();
         c->proc = 0;
 
         found = 1;
