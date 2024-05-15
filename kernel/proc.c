@@ -127,6 +127,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  //新进程默认为0  不追踪syscall
+  p->tracemask = 0;
   return p;
 }
 
@@ -266,6 +268,8 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
+  //子进程继承父进程的mask
+  np->tracemask = p->tracemask;
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
@@ -692,4 +696,19 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Count how many processes are not in the state of UNUSED
+uint64
+count_free_proc(void) {
+  struct proc *p;
+  uint64 count = 0;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) { //判断是否使用
+      count += 1;
+    }
+    release(&p->lock);
+  }
+  return count;
 }
