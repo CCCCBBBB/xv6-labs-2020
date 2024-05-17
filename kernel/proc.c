@@ -127,6 +127,16 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // initializes the alarm releated fields
+  if((p->alarmFrame = (struct trapframe*)kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->isAlarming = 0;
+  p->alarmPeriod = 0;
+  p->alarmHandler = 0;
+  p->alarmTicks = 0;
   return p;
 }
 
@@ -150,6 +160,13 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  if(p->alarmFrame)
+    kfree((void*)p->alarmFrame);
+  p->alarmFrame = 0;
+  p->isAlarming = 0;
+  p->alarmPeriod = 0;
+  p->alarmHandler = 0;
+  p->alarmTicks = 0;
 }
 
 // Create a user page table for a given process,

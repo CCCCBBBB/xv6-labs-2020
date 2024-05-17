@@ -132,3 +132,18 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+//backtrace
+void
+backtrace()
+{
+  printf("backtrace:\n");
+
+  uint64 fp = r_fp();
+  while(fp != PGROUNDUP(fp)) //最后调用的函数返回应该是栈顶 也就是最高的地址
+  {
+    uint64 ret = *(uint64*)(fp -8); //返回地址
+    printf("%p\n", ret);
+    fp = *(uint64*)(fp -16); //上一个调用函数
+  }
+}

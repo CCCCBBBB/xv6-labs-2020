@@ -50,7 +50,9 @@ test0()
     if((i % 1000000) == 0)
       write(2, ".", 1);
     if(count > 0)
+    {
       break;
+    }
   }
   sigalarm(0, 0);
   if(count > 0){
