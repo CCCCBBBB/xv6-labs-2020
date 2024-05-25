@@ -322,6 +322,36 @@ sys_open(void)
     return -1;
   }
 
+   // 处理符号链接
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    // 若符号链接指向的仍然是符号链接，则递归的跟随它
+    // 直到找到真正指向的文件
+    // 但深度不能超过MAX_SYMLINK_DEPTH
+    for(int i = 0; i < 10; ++i) {
+      // 读出符号链接指向的路径
+      if(readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      ip = namei(path);
+      if(ip == 0) {
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if(ip->type != T_SYMLINK)
+        break;
+    }
+    // 超过最大允许深度后仍然为符号链接，则返回错误
+    if(ip->type == T_SYMLINK) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -482,5 +512,46 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+int 
+sys_symlink(char * target, char *path) 
+{
+  char ktarget[MAXPATH], kpath[MAXPATH];
+  memset(ktarget, 0, MAXPATH);
+  memset(kpath, 0, MAXPATH);
+  struct inode *ip;
+  int n, r;
+
+  if((n = argstr(0, ktarget, MAXPATH)) < 0){
+    return -1;
+  }
+
+  if((n = argstr(1, kpath, MAXPATH)) < 0){
+    return -1;
+  }
+
+  begin_op();
+
+  // 这个软链接已经存在了
+  if((ip = namei(kpath)) != 0){
+    // symlink already exists
+    end_op();
+    return -1;
+  }
+
+  if((ip = create(kpath, T_SYMLINK, 0, 0)) == 0) {
+    end_op();
+    return -1;    
+  }
+
+  if((r = writei(ip, 0, (uint64)ktarget, 0, MAXPATH)) < 0){
+    iunlockput(ip);
+    end_op();
+    return -1;      
+  }
+  iunlockput(ip);
+  end_op();
   return 0;
 }
